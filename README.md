@@ -2,6 +2,8 @@
 
 A minimal, high-fidelity Progressive Web App (PWA) proof-of-concept built with **Next.js 14 (App Router)** and **Tailwind CSS**. Demonstrates standalone windowing, App Badging API, and offline fallback handling without dynamic offline caching (adhering strictly to project constraints).
 
+📖 **Comprehensive Documentation**: See [docs/pwa-poc-overview-and-comparison.md](docs/pwa-poc-overview-and-comparison.md) for full architecture flows, file breakdowns, and PWA vs. Normal Website comparison.
+
 ---
 
 ## 🚀 Quick Start
