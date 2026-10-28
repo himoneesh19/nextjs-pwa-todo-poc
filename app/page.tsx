@@ -47,6 +47,7 @@ export default function TodoPage() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null)
   const [isStandalone, setIsStandalone] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
+  const [notificationPermission, setNotificationPermission] = useState<'default' | 'granted' | 'denied'>('default')
 
   // Fetch tasks from Server API
   const fetchTasks = useCallback(async () => {
@@ -114,7 +115,47 @@ export default function TodoPage() {
     }
   }, [fetchTasks])
 
-  // Badge Management: Universal Title Badge + Native W3C App Badge
+  // Check notification permission state on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setNotificationPermission(Notification.permission)
+    }
+  }, [])
+
+  // Dynamic Local Notification: syncs pending count to Android notification drawer & icon badge
+  const syncLocalNotificationBadge = useCallback(async (currentTasks: Task[]) => {
+    if (typeof window === 'undefined' || !('Notification' in window) || Notification.permission !== 'granted') {
+      return
+    }
+
+    const pending = currentTasks.filter((t) => !t.completed).length
+
+    try {
+      if ('serviceWorker' in navigator) {
+        const registration = await navigator.serviceWorker.ready
+        if (registration) {
+          if (pending > 0) {
+            await registration.showNotification('YHD Tasks POC', {
+              body: `You have ${pending} pending task${pending === 1 ? '' : 's'}.`,
+              icon: '/icons/icon-192.png',
+              badge: '/icons/icon-192.png',
+              tag: 'yhd-pending-tasks-badge',
+              renotify: false,
+              data: { url: '/' },
+            } as NotificationOptions)
+          } else {
+            // Dismiss active notification when all tasks completed
+            const notifications = await registration.getNotifications({ tag: 'yhd-pending-tasks-badge' })
+            notifications.forEach((n) => n.close())
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Local notification update failed:', err)
+    }
+  }, [])
+
+  // Badge Management: Universal Title Badge + Native W3C App Badge + Local Notification
   useEffect(() => {
     const pendingCount = tasks.filter((t) => !t.completed).length
 
@@ -124,12 +165,30 @@ export default function TodoPage() {
     // 2. Native OS App Badging API (Supported Windows/Mac Chrome/Edge & some Android WebAPKs)
     if ('setAppBadge' in navigator) {
       if (pendingCount > 0) {
-        navigator.setAppBadge(pendingCount).catch(() => {})
+        navigator.setAppBadge(pendingCount).catch(() => { })
       } else {
-        navigator.clearAppBadge().catch(() => {})
+        navigator.clearAppBadge().catch(() => { })
       }
     }
-  }, [tasks])
+
+    // 3. Android Local Notification (Puts notification in drawer to trigger launcher badge)
+    syncLocalNotificationBadge(tasks)
+  }, [tasks, syncLocalNotificationBadge])
+
+  // Request Notification Permission
+  const requestNotificationPermission = async () => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      try {
+        const permission = await Notification.requestPermission()
+        setNotificationPermission(permission)
+        if (permission === 'granted') {
+          syncLocalNotificationBadge(tasks)
+        }
+      } catch (err) {
+        console.error('Error requesting notification permission:', err)
+      }
+    }
+  }
 
   // CRUD: Add Task via Server API
   const addTask = async (e: React.FormEvent) => {
@@ -259,11 +318,10 @@ export default function TodoPage() {
           <div className="flex items-center space-x-2 text-xs">
             {/* Online / Offline Indicator */}
             <div
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-full border ${
-                isOnline
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                  : 'bg-rose-500/10 text-rose-400 border-rose-500/20 animate-pulse'
-              }`}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-full border ${isOnline
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                : 'bg-rose-500/10 text-rose-400 border-rose-500/20 animate-pulse'
+                }`}
             >
               {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
               <span>{isOnline ? 'Online' : 'Offline'}</span>
@@ -291,9 +349,29 @@ export default function TodoPage() {
             <span className={`w-2 h-2 rounded-full ${swRegistered ? 'bg-emerald-400' : 'bg-amber-400'}`} />
             <span>Service Worker: {swRegistered ? 'Active (Offline shell ready)' : 'Registering...'}</span>
           </div>
-          <div className="flex items-center gap-1.5 text-indigo-400 font-medium">
-            <Bell className="w-3.5 h-3.5" />
-            <span>Active Count Badge: {pendingCount} Pending</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 text-indigo-400 font-medium">
+              <Bell className="w-3.5 h-3.5" />
+              <span>Badge: {pendingCount} Pending</span>
+            </div>
+
+            {/* Notification Permission Toggle/Badge for Android */}
+            {notificationPermission !== 'granted' ? (
+              <button
+                type="button"
+                onClick={requestNotificationPermission}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 transition-all font-medium text-[11px]"
+                title="Enable to show Android notification and badge"
+              >
+                <Bell className="w-3 h-3 text-indigo-400" />
+                <span>Enable Android Badge</span>
+              </button>
+            ) : (
+              <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                <Check className="w-3 h-3" />
+                <span>Android Badge Active</span>
+              </span>
+            )}
           </div>
         </div>
 
@@ -310,11 +388,10 @@ export default function TodoPage() {
                   type="button"
                   key={cat}
                   onClick={() => setCategory(cat)}
-                  className={`text-[11px] px-2 py-0.5 rounded-md border transition-all ${
-                    category === cat
-                      ? CATEGORY_COLORS[cat] + ' font-semibold'
-                      : 'border-transparent text-slate-400 hover:text-slate-200'
-                  }`}
+                  className={`text-[11px] px-2 py-0.5 rounded-md border transition-all ${category === cat
+                    ? CATEGORY_COLORS[cat] + ' font-semibold'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
                 >
                   {cat}
                 </button>
@@ -348,11 +425,10 @@ export default function TodoPage() {
               <button
                 key={tab}
                 onClick={() => setFilter(tab)}
-                className={`text-xs px-3 py-1.5 rounded-lg capitalize transition-all ${
-                  filter === tab
-                    ? 'bg-indigo-600 text-white font-medium shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
+                className={`text-xs px-3 py-1.5 rounded-lg capitalize transition-all ${filter === tab
+                  ? 'bg-indigo-600 text-white font-medium shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+                  }`}
               >
                 {tab} {tab === 'pending' && `(${pendingCount})`}
               </button>
@@ -376,11 +452,10 @@ export default function TodoPage() {
             filteredTasks.map((task) => (
               <div
                 key={task.id}
-                className={`group flex items-center justify-between p-3.5 rounded-xl border transition-all ${
-                  task.completed
-                    ? 'bg-slate-900/40 border-slate-800/60 opacity-60'
-                    : 'bg-slate-800/60 hover:bg-slate-800 border-slate-700/60 shadow-sm'
-                }`}
+                className={`group flex items-center justify-between p-3.5 rounded-xl border transition-all ${task.completed
+                  ? 'bg-slate-900/40 border-slate-800/60 opacity-60'
+                  : 'bg-slate-800/60 hover:bg-slate-800 border-slate-700/60 shadow-sm'
+                  }`}
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <button
@@ -421,16 +496,14 @@ export default function TodoPage() {
                     <div className="min-w-0 flex-1">
                       <p
                         onClick={() => toggleTask(task.id)}
-                        className={`text-sm truncate cursor-pointer ${
-                          task.completed ? 'line-through text-slate-500' : 'text-slate-200'
-                        }`}
+                        className={`text-sm truncate cursor-pointer ${task.completed ? 'line-through text-slate-500' : 'text-slate-200'
+                          }`}
                       >
                         {task.title}
                       </p>
                       <span
-                        className={`inline-block mt-1 text-[10px] font-medium px-1.5 py-0.2 rounded border ${
-                          CATEGORY_COLORS[task.category]
-                        }`}
+                        className={`inline-block mt-1 text-[10px] font-medium px-1.5 py-0.2 rounded border ${CATEGORY_COLORS[task.category]
+                          }`}
                       >
                         {task.category}
                       </span>
